@@ -30,8 +30,6 @@ Globals:
     Architectures:
       - x86_64
     Timeout: !Ref FunctionTimeout
-    # IAM is read-only in the sandbox — use the pre-created LabRole.
-    Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
     Tracing: Active
 
 Resources:
@@ -86,6 +84,7 @@ Resources:
       PackageType: Image
       FunctionName: !Sub "${AWS::StackName}-resize"
       MemorySize: !Ref ResizeMemorySize
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/resize_only:latest"
       Environment:
         Variables:
@@ -153,6 +152,7 @@ Resources:
       PackageType: Image
       FunctionName: !Sub "${AWS::StackName}-grayscale"
       MemorySize: !Ref GrayscaleMemorySize
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/grayscale_only:latest"
       Environment:
         Variables:
@@ -220,6 +220,7 @@ Resources:
       PackageType: Image
       FunctionName: !Sub "${AWS::StackName}-detect"
       MemorySize: !Ref DetectMemorySize
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/detect_only:latest"
       Environment:
         Variables:
