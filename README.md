@@ -19,7 +19,7 @@ Per immagine compatibile con aws:
 docker build --platform linux/amd64 --provenance=false -t resize_img .
 
 --platform fa si che venga costruito un container linux per il processore amd64 (compatibile con aws)
--- provencancew genera nua sola immagine e senza indici come invece sono le nuove immagini di Docker
+-- provenance genera nua sola immagine e senza indici come invece sono le nuove immagini di Docker
 
 docker run -p 9000:8080 \               # map host port 9000 → container port 8080
   -e LOCAL_TEST=true \                  # set environment variable for local mode
