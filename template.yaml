@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Microservices image-processing pipeline.
+  Three independent Lambda functions — one per operation — each with its own
+  input bucket and memory allocation sized to its actual needs.
+
+Parameters:
+  ResizeMemorySize:
+    Type: Number
+    Default: 256
+    Description: 256MB is enough for opencv resize (no model involved).
+
+  GreyscaleMemorySize:
+    Type: Number
+    Default: 256
+
+  DetectMemorySize:
+    Type: Number
+    Default: 1024
+    Description: Needs ~800MB+ for the MobileNet-SSD model + DNN inference.
+
+  FunctionTimeout:
+    Type: Number
+    Default: 60
+    Description: Lambda timeout in seconds (max 900).
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Timeout: !Ref FunctionTimeout
+    # IAM is read-only in the sandbox — use the pre-created LabRole.
+    Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+    Tracing: Active
+
+Resources:
+
+  # =====================================================================
+  # 1. RESIZE MICROSERVICE
+  # =====================================================================
+
+  ResizeInputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ms-resize-in-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestUploads
+            Status: Enabled
+            ExpirationInDays: 3
+
+  ResizeOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ms-resize-output-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestUploads
+            Status: Enabled
+            ExpirationInDays: 3
+
+  ResizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Sub "${AWS::StackName}-resize"
+      MemorySize: !Ref ResizeMemorySize
+      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/resize_only:latest"
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref ResizeOutputBucket
+      Events:
+        Trigger:
+          Type: S3
+          Properties:
+            Bucket: !Ref ResizeInputBucket
+            Events: s3:ObjectCreated:*
+
+  ResizeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ResizeFunction}"
+      RetentionInDays: 7
+
+  # =====================================================================
+  # 2. GREYSCALE MICROSERVICE
+  # =====================================================================
+
+  GreyscaleInputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ms-greyscale-in-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestUploads
+            Status: Enabled
+            ExpirationInDays: 3
+
+  GreyscaleOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ms-greyscale-output-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestUploads
+            Status: Enabled
+            ExpirationInDays: 3
+
+  GreyscaleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Sub "${AWS::StackName}-greyscale"
+      MemorySize: !Ref GreyscaleMemorySize
+      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/grayscale_only:latest"
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref GreyscaleOutputBucket
+      Events:
+        Trigger:
+          Type: S3
+          Properties:
+            Bucket: !Ref GreyscaleInputBucket
+            Events: s3:ObjectCreated:*
+
+  GreyscaleLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${GreyscaleFunction}"
+      RetentionInDays: 7
+
+  # =====================================================================
+  # 3. DETECT MICROSERVICE (MobileNet-SSD)
+  # =====================================================================
+
+  DetectInputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ms-detect-in-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestUploads
+            Status: Enabled
+            ExpirationInDays: 3
+
+  DetectOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ms-detect-output-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTestUploads
+            Status: Enabled
+            ExpirationInDays: 3
+
+  DetectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Sub "${AWS::StackName}-detect"
+      MemorySize: !Ref DetectMemorySize
+      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/detect_only:latest"
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref DetectOutputBucket
+      Events:
+        Trigger:
+          Type: S3
+          Properties:
+            Bucket: !Ref DetectInputBucket
+            Events: s3:ObjectCreated:*
+
+  DetectLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DetectFunction}"
+      RetentionInDays: 7
