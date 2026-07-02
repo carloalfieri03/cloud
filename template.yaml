@@ -11,7 +11,7 @@ Parameters:
     Default: 256
     Description: 256MB is enough for opencv resize (no model involved).
 
-  GreyscaleMemorySize:
+  GrayscaleMemorySize:
     Type: Number
     Default: 256
 
@@ -27,7 +27,6 @@ Parameters:
 
 Globals:
   Function:
-    Runtime: python3.12
     Architectures:
       - x86_64
     Timeout: !Ref FunctionTimeout
@@ -105,13 +104,13 @@ Resources:
       RetentionInDays: 7
 
   # =====================================================================
-  # 2. GREYSCALE MICROSERVICE
+  # 2. graySCALE MICROSERVICE
   # =====================================================================
 
-  GreyscaleInputBucket:
+  GrayscaleInputBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${AWS::StackName}-ms-greyscale-in-${AWS::AccountId}"
+      BucketName: !Sub "${AWS::StackName}-ms-grayscale-in-${AWS::AccountId}"
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -128,10 +127,10 @@ Resources:
             Status: Enabled
             ExpirationInDays: 3
 
-  GreyscaleOutputBucket:
+  grayscaleOutputBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${AWS::StackName}-ms-greyscale-output-${AWS::AccountId}"
+      BucketName: !Sub "${AWS::StackName}-ms-grayscale-output-${AWS::AccountId}"
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -148,27 +147,27 @@ Resources:
             Status: Enabled
             ExpirationInDays: 3
 
-  GreyscaleFunction:
+  GrayscaleFunction:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: !Sub "${AWS::StackName}-greyscale"
-      MemorySize: !Ref GreyscaleMemorySize
+      FunctionName: !Sub "${AWS::StackName}-grayscale"
+      MemorySize: !Ref GrayscaleMemorySize
       ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/grayscale_only:latest"
       Environment:
         Variables:
-          OUTPUT_BUCKET: !Ref GreyscaleOutputBucket
+          OUTPUT_BUCKET: !Ref GrayscaleOutputBucket
       Events:
         Trigger:
           Type: S3
           Properties:
-            Bucket: !Ref GreyscaleInputBucket
+            Bucket: !Ref GrayscaleInputBucket
             Events: s3:ObjectCreated:*
 
-  GreyscaleLogGroup:
+  GrayscaleLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${GreyscaleFunction}"
+      LogGroupName: !Sub "/aws/lambda/${GrayscaleFunction}"
       RetentionInDays: 7
 
   # =====================================================================
