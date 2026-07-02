@@ -1,0 +1,14 @@
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "lambdamstipregofunz-ms-resize-in-521011614244" 
+        },
+        "object": {
+          "key": "large_medium_000000269113_20MB.jpg"
+        }
+      }
+    }
+  ]
+}
