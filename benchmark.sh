@@ -38,7 +38,7 @@ for MEM in "${MEMORY_SIZES[@]}"; do
     # Extract Init Duration (the cold start duration) if present
     INIT_DURATION=$(echo "$COLD_REPORT" | awk '{for (i=1; i<=NF; i++) if ($i=="Init" && $(i+1)=="Duration:") {print $(i+2); exit}}')
     if [ -z "$INIT_DURATION" ]; then
-        INIT_DURATION="0.00" # Container was reused unexpectedly or no init time logged
+        INIT_DURATION="0.00" 
     fi
 
     TOTAL_DURATION=0
@@ -57,17 +57,17 @@ for MEM in "${MEMORY_SIZES[@]}"; do
         DURATION=$(echo "$REPORT" | awk '{for (i=1; i<=NF; i++) if ($i=="Duration:") {print $(i+1); exit}}')
         MEM_USED=$(echo "$REPORT" | awk '{for (i=1; i<=NF; i++) if ($i=="Max" && $(i+2)=="Used:") {print $(i+3); exit}}')
 
-        TOTAL_DURATION=$(echo "$TOTAL_DURATION + $DURATION" | bc)
+        # Fixed: Replaced bc with awk for decimal summation
+        TOTAL_DURATION=$(awk "BEGIN {print $TOTAL_DURATION + $DURATION}")
 
         if [ "$MEM_USED" -gt "$MAX_MEM" ]; then
             MAX_MEM=$MEM_USED
         fi
     done
 
-    # 5. Calculations
-    AVG_DURATION=$(echo "scale=2; $TOTAL_DURATION / $ITERATIONS" | bc)
-    # Cost formula based on Standard Architecture pricing rates
-    COST=$(echo "scale=10; ($MEM / 1024) * ($AVG_DURATION / 1000) * 0.0000166667" | bc)
+    # 5. Calculations (Fixed: Replaced bc with awk formatting strings)
+    AVG_DURATION=$(awk "BEGIN {printf \"%.2f\", $TOTAL_DURATION / $ITERATIONS}")
+    COST=$(awk "BEGIN {printf \"%.10f\", ($MEM / 1024) * ($AVG_DURATION / 1000) * 0.0000166667}")
 
     echo "$MEM,$INIT_DURATION,$AVG_DURATION,$MAX_MEM,$COST"
 done
