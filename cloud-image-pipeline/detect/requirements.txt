@@ -1,0 +1,3 @@
+opencv-python-headless
+numpy
+## boto non c'è bisogno visto che è nativo di Lambda e gli altri package sono built in di python

@@ -1,0 +1,13 @@
+# Use the official Python 3.13 Lambda base image
+FROM public.ecr.aws/lambda/python:3.13
+
+# application code and model files musto go in rott where lambda stores code and dependencies files
+COPY resize_app.py ${LAMBDA_TASK_ROOT}
+
+# Copy requirements.txt and install dependencies
+COPY requirements.txt ${LAMBDA_TASK_ROOT}
+RUN pip install --no-cache-dir -r requirements.txt 
+## no cache-dir tells to not save installation files, so docker image is lighter
+
+# The handler is 'app.handler' 
+CMD ["resize_app.resize_handler"]
