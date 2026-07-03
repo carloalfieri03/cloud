@@ -5,6 +5,7 @@ import logging
 import time
 import io
 from PIL import Image
+import signal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -12,6 +13,12 @@ logger.setLevel(logging.INFO)
 LOCAL_TEST = os.environ.get("LOCAL_TEST", "false").lower() == "true"
 LOCAL_OUTPUT_DIR = os.environ.get("LOCAL_OUTPUT_DIR", "/tmp/output")
 
+# New for EC2: which bucket this worker polls, and how often
+# must be created manually in the Linux terminal of the EC2 instance before running the script, e.g.:
+# export INPUT_BUCKET=my-input-bucket
+INPUT_BUCKET = os.environ.get("INPUT_BUCKET")
+POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "5")) # how often to re-check S3 for new objects
+MAX_KEYS_PER_POLL = int(os.environ.get("MAX_KEYS_PER_POLL", "50"))
 
 SMALL_THRESHOLD_BYTES = 350 * 1024
 MEDIUM_THRESHOLD_BYTES = 5000 * 1024
@@ -159,6 +166,10 @@ def process_image_local(local_path):
     }
 
 def resize_handler(event, context):
+    """
+    Original Lambda handler for S3-triggered events. Also supports local testing with a "local_path" key in the event.
+    This function is left completely untouched so this same file can be used for proposal 1 by AWS Lambda container image.
+    """
 
     results = []
    # Local test mode
@@ -173,3 +184,61 @@ def resize_handler(event, context):
             logger.exception("Error in resize_handler")
             
     return {"status": "success", "operation": "resize", "processed": results}
+
+### --- NEW CODE FOR THE EC2 WORKER (PROPOSAL 4) BELOW --- ###
+
+# There is no AWS managed trigger on a plain EC2 instance. This loop replaces the Lambda event-driven model with a polling model.
+# Basically, it repeatedly checks the input S3 bucket for new objects, and for every object found,
+# it calls the same core_process() function that the Lambda handler would call.
+# Then, the object is deleted from the input bucket, otherwise the same object would be reprocessed
+# on every single poll cycle forever. Thus each image is processed exactly once.
+
+_shutdown_requested = False # Ctrl+C
+
+def handle_shutdown_signal(sign, frame):
+    global _shutdown_requested
+    logger.info(f"Shutdown signal received: {sign}. Will exit after current poll cycle.")
+    _shutdown_requested = True
+
+signal.signal(signal.SIGTERM, handle_shutdown_signal) # ask the process to terminate gracefully
+signal.signal(signal.SIGINT, handle_shutdown_signal)
+
+# to reuse the same core_process() function, we need to build a fake S3 event record for each object found in the input bucket
+def build_fake_s3_record(bucket, key):
+    return{
+        "s3": {
+            "bucket": {"name": bucket},
+            "object": {"key": key}
+        }
+    }
+
+def run_worker():
+    if not INPUT_BUCKET:
+        raise SystemExit("INPUT_BUCKET env var is required for the EC2 worker mode.")
+    
+    logger.info(
+        f"Starting EC2 resize worker. INPUT_BUCKET={INPUT_BUCKET} "
+        f"OUTPUT_BUCKET={OUTPUT_BUCKET} POLL_INTERVAL={POLL_INTERVAL_SECONDS}s"
+    )
+
+    while not _shutdown_requested: # infinite loop, until Ctrl+C or SIGTERM is received
+        try:
+            # every 5s (or whatever POLL_INTERVAL_SECONDS is set to), list objects in the input bucket
+            response = s3.list_objects_v2(Bucket=INPUT_BUCKET, MaxKeys=MAX_KEYS_PER_POLL)
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                record = build_fake_s3_record(INPUT_BUCKET, key)
+                try:
+                    core_process(record)
+                    s3.delete_object(Bucket=INPUT_BUCKET, Key=key)
+                except Exception:
+                    logger.exception(f"Failed to process {key} - leaving it in the bucket to retry next poll")
+        except Exception:
+            logger.exception("Error while polling S3 - will retry next cycle")
+
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+    logger.info("Worker stopped cleanly.")
+
+if __name__ == "__main__":
+    run_worker()

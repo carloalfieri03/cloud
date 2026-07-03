@@ -6,12 +6,20 @@ import numpy as np
 import urllib.parse
 import logging
 import time
+import signal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 LOCAL_TEST = os.environ.get("LOCAL_TEST", "false").lower() == "true"
 LOCAL_OUTPUT_DIR = os.environ.get("LOCAL_OUTPUT_DIR", "/tmp/output")
+
+# New for EC2: which bucket this worker polls, and how often
+# must be created manually in the Linux terminal of the EC2 instance before running the script, e.g.:
+# export INPUT_BUCKET=my-input-bucket
+INPUT_BUCKET = os.environ.get("INPUT_BUCKET")
+POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "5")) # how often to re-check S3 for new objects
+MAX_KEYS_PER_POLL = int(os.environ.get("MAX_KEYS_PER_POLL", "50"))
 
 SMALL_THRESHOLD_BYTES = 350 * 1024
 MEDIUM_THRESHOLD_BYTES = 5000 * 1024
@@ -251,3 +259,59 @@ def detection_handler(event, context):
             logger.exception("Error in detection_handler")
 
     return {"status": "success", "operation": "detect", "processed": results}
+
+### --- NEW CODE FOR THE EC2 WORKER (PROPOSAL 4) BELOW --- ###
+
+# Important!!! 
+# get_net() is still lazy-loaded on first-call, exactly as in the Lambda version. But on EC2 this only matters once.
+# It's a normal runnig program, not a per-invocation env. Thus, the model is loaded exactly once for the 
+# entire lifetime of the worker.
+
+_shutdown_requested = False # Ctrl+C
+
+def handle_shutdown_signal(sign, frame):
+    global _shutdown_requested
+    logger.info(f"Shutdown signal received: {sign}. Will exit after current poll cycle.")
+    _shutdown_requested = True
+
+signal.signal(signal.SIGTERM, handle_shutdown_signal) # ask the process to terminate gracefully
+signal.signal(signal.SIGINT, handle_shutdown_signal)
+
+# to reuse the same core_process() function, we need to build a fake S3 event record for each object found in the input bucket
+def build_fake_s3_record(bucket, key):
+    return {"s3": {"bucket": {"name": bucket}, "object": {"key": key}}}
+
+def run_worker():
+    if not INPUT_BUCKET:
+        raise SystemExit("INPUT_BUCKET env var is required for the EC2 worker mode.")
+    
+    # Load the model immediately at startup rather than waiting for the first image
+
+    get_net()
+
+    logger.info(
+        f"Starting EC2 resize worker. INPUT_BUCKET={INPUT_BUCKET} "
+        f"OUTPUT_BUCKET={OUTPUT_BUCKET} POLL_INTERVAL={POLL_INTERVAL_SECONDS}s"
+    )
+
+    while not _shutdown_requested: # infinite loop, until Ctrl+C or SIGTERM is received
+        try:
+            # every 5s (or whatever POLL_INTERVAL_SECONDS is set to), list objects in the input bucket
+            response = s3.list_objects_v2(Bucket=INPUT_BUCKET, MaxKeys=MAX_KEYS_PER_POLL)
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                record = build_fake_s3_record(INPUT_BUCKET, key)
+                try:
+                    core_process(record)
+                    s3.delete_object(Bucket=INPUT_BUCKET, Key=key)
+                except Exception:
+                    logger.exception(f"Failed to process {key} - leaving it in the bucket to retry next poll")
+        except Exception:
+            logger.exception("Error while polling S3 - will retry next cycle")
+
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+    logger.info("Worker stopped cleanly.")
+
+if __name__ == "__main__":
+    run_worker()

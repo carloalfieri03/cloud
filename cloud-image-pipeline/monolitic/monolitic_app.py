@@ -6,6 +6,7 @@ import numpy as np
 import urllib.parse
 import logging
 import time
+import signal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -33,6 +34,13 @@ MEDIUM_THRESHOLD_BYTES = 5000 * 1024
 # BIG_THRESHOLD_BYTES= 5000 * 1024 ## just for info 
 
 OUTPUT_BUCKET = os.environ.get("OUTPUT_BUCKET")
+
+# New for EC2: which bucket this worker polls, and how often
+# must be created manually in the Linux terminal of the EC2 instance before running the script, e.g.:
+# export INPUT_BUCKET=my-input-bucket
+INPUT_BUCKET = os.environ.get("INPUT_BUCKET")
+POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "5")) # how often to re-check S3 for new objects
+MAX_KEYS_PER_POLL = int(os.environ.get("MAX_KEYS_PER_POLL", "50"))
 
 # open the S3 and CloudWatch clients once, to avoid re-opening them on every invocation
 if not LOCAL_TEST:
@@ -293,3 +301,48 @@ def handler(event, context):
             logger.exception(f"Error processing s3://{bucket}/{key}: {e}")
     
     return {"status": "success", "processed": results}
+
+### --- NEW CODE FOR THE EC2 WORKER (PROPOSAL 4) BELOW --- ###
+
+# Here process_image(bucket, key) already takes bucket/key directly and not a record, and already reads the operation
+# from the key path. Thus, it is not necessary to build a fake S3 record.
+
+_shutdown_requested = False # Ctrl+C
+
+def handle_shutdown_signal(sign, frame):
+    global _shutdown_requested
+    logger.info(f"Shutdown signal received: {sign}. Will exit after current poll cycle.")
+    _shutdown_requested = True
+
+signal.signal(signal.SIGTERM, handle_shutdown_signal) # ask the process to terminate gracefully
+signal.signal(signal.SIGINT, handle_shutdown_signal)
+
+def run_worker():
+    if not INPUT_BUCKET:
+        raise SystemExit("INPUT_BUCKET env var is required for the EC2 worker mode.")
+
+    logger.info(
+        f"Starting EC2 resize worker. INPUT_BUCKET={INPUT_BUCKET} "
+        f"OUTPUT_BUCKET={OUTPUT_BUCKET} POLL_INTERVAL={POLL_INTERVAL_SECONDS}s"
+    )
+
+    while not _shutdown_requested: # infinite loop, until Ctrl+C or SIGTERM is received
+        try:
+            # every 5s (or whatever POLL_INTERVAL_SECONDS is set to), list objects in the input bucket
+            response = s3.list_objects_v2(Bucket=INPUT_BUCKET, MaxKeys=MAX_KEYS_PER_POLL)
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                try:
+                    process_image(INPUT_BUCKET, key)
+                    s3.delete_object(Bucket=INPUT_BUCKET, Key=key)
+                except Exception:
+                    logger.exception(f"Failed to process {key} - leaving it in the bucket to retry next poll")
+        except Exception:
+            logger.exception("Error while polling S3 - will retry next cycle")
+
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+    logger.info("Worker stopped cleanly.")
+
+if __name__ == "__main__":
+    run_worker()
