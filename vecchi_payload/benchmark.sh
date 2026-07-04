@@ -13,9 +13,8 @@ if [ ! -f "$PAYLOAD_FILE" ]; then
 fi
 
 # Informational headers go to STDERR (>&2) so they don't break the CSV
-echo "========================================================================" >&2
-echo "🚀 Running Benchmark... (CSV data is being saved silently)" >&2
-echo "========================================================================" >&2
+
+echo " Running Benchmark (CSV data is being saved silently)" >&2
 
 # This is the ONLY text that goes to STDOUT (the CSV file)
 echo "Memory(MB),ColdStart(ms),AvgDuration(ms),MaxMemUsed(MB),EstCostPerInvoke"

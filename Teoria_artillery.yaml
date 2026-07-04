@@ -1,0 +1,24 @@
+config:
+  target: s3
+  phases: 
+  ### pause phase no traffic per 10 seconds
+  - name: nothing
+    pause: 10
+  - name: constant arrival rate
+    duration: 60
+    arrivalRate: 10 
+    ### 600 requests ( 10 users per 60 seconds, can vary sue to latency or othr things like setting up cont)
+  - name: ramp up rate
+    duration: 60
+    arrivalRate: 10
+    rampTo: 50 
+    ### ramps users from 10 to 50 in 60 seconds
+  - name: fixed arrivals
+    duration: 60
+    arrivalCount: 120
+    #### 120 virtual users in 1 minut
+
+scenarios:
+  - name: burst
+    flow:
+    - 

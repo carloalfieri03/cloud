@@ -113,6 +113,23 @@ def core_process(record):
     bucket = record['s3']['bucket']['name']
     key = urllib.parse.unquote_plus(record['s3']['object']['key'])
     base_name = os.path.splitext(os.path.basename(key))[0]
+     # ==========================================
+    # FAILURE INJECTION TESTING SECTION
+    # ==========================================
+    
+    # 1. Simulate an explicit code crash
+    if "simulate-crash" in key:
+        logger.warning(f"!!! Chaos Test Triggered: Simulating a code crash for file: {key} !!!")
+        raise ValueError("Simulated processing crash for system testing")
+
+    # 2. Simulate a function timeout
+    if "simulate-timeout" in key:
+        logger.warning(f"!!! Chaos Test Triggered: Simulating a hard timeout for file: {key} !!!")
+        logger.warning("The execution will now freeze until AWS terminates the container.")
+        time.sleep(70) # Exceeds maximum possible Lambda timeout (15 mins)
+
+    # ==========================================
+
 
     start = time.perf_counter()
     image, original_bytes = download_image_from_s3(bucket, key)
@@ -180,9 +197,11 @@ def resize_handler(event, context):
     for record in event.get('Records', []):
         try:
             results.append(core_process(record))
-        except Exception:
-            logger.exception("Error in resize_handler")
-            
+        except Exception as e:
+            logger.exception(f"Error in detection_handler processing record: {record}")
+            # CRITICAL: Re-raise the exact exception 'e' so the AWS Lambda service 
+            # recognizes this invocation as a system failure.
+            raise e
     return {"status": "success", "operation": "resize", "processed": results}
 
 ### --- NEW CODE FOR THE EC2 WORKER (PROPOSAL 4) BELOW --- ###

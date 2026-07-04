@@ -88,6 +88,7 @@ def detect_objects(image):
     """
     returns an annotated copy of the image plus a list of detections (label, confidence, box).
     """
+    logger.info(cv2.getBuildInformation())
     # image shape: (height × width × channels) 
     (h, w) = image.shape[:2]
     net = get_net()
@@ -172,6 +173,23 @@ def core_process(record):
     key = urllib.parse.unquote_plus(record['s3']['object']['key'])
     base_name = os.path.splitext(os.path.basename(key))[0]
 
+    # ==========================================
+    # FAILURE INJECTION TESTING SECTION
+    # ==========================================
+    
+    # 1. Simulate an explicit code crash
+    if "simulate-crash" in key:
+        logger.warning(f"!!! Chaos Test Triggered: Simulating a code crash for file: {key} !!!")
+        raise ValueError("Simulated processing crash for system testing")
+
+    # 2. Simulate a function timeout
+    if "simulate-timeout" in key:
+        logger.warning(f"!!! Chaos Test Triggered: Simulating a hard timeout for file: {key} !!!")
+        logger.warning("The execution will now freeze until AWS terminates the container.")
+        time.sleep(70) # Exceeds maximum possible Lambda timeout (15 mins)
+
+    # ==========================================
+
     start = time.perf_counter()
     image, original_bytes = download_image_from_s3(bucket, key)
     size_category = classify_image_size(original_bytes)
@@ -255,8 +273,11 @@ def detection_handler(event, context):
     for record in event.get('Records', []):
         try:
             results.append(core_process(record))
-        except Exception:
-            logger.exception("Error in detection_handler")
+        except Exception as e:
+            logger.exception(f"Error in detection_handler processing record: {record}")
+            # CRITICAL: Re-raise the exact exception 'e' so the AWS Lambda service 
+            # recognizes this invocation as a system failure.
+            raise e
 
     return {"status": "success", "operation": "detect", "processed": results}
 
