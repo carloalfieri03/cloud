@@ -1,0 +1,15 @@
+config:
+  # Artillery requires a target to exist in the config, even if we don't use it directly
+  target: "http://dummy.local" 
+  processor: "./gemini.js"
+  
+  phases:
+    - duration: 60
+      arrivalRate: 10
+      name: "Native AWS SDK Load"
+
+scenarios:
+  - name: "Copy S3 objects to trigger Lambdas"
+    flow:
+      # This triggers the JS function which handles everything natively
+      - function: "uploadImage"

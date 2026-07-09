@@ -36,13 +36,26 @@ docker run -p 9000:8080 \               # map host port 9000 → container port 
 ```
 docker run -d -p 9002:8080 \
   -e LOCAL_TEST=true \
-  -v /Users/carloalbertoalfieri/Desktop/cloud/cloud-image-pipeline/Datav2/all_test_images:/images:ro \
+  -v /Users/carloalbertoalfieri/Desktop/DatiTest_cloud/final_images:/images:ro \
   -v /Users/carloalbertoalfieri/Desktop/cloud/local_output:/output \
   -e LOCAL_OUTPUT_DIR=/output \
-  resize_img:latest
+  dtc_img:latest
 ```
 Genera richiesta al tuo container: 
 ```
   curl -X POST "http://localhost:9002/2015-03-31/functions/function/invocations" \
-  -d @/Users/carloalbertoalfieri/Desktop/cloud/event.json
+  -d @/Users/carloalbertoalfieri/Desktop/cloud/vecchi_payload/event.json
 ```
+
+
+artillery 
+
+````
+
+
+artillery run-fargate \
+  --region us-east-1 \
+  --task-role-name LabRole \
+  --output report.json \
+  artillery.yaml
+  `````

@@ -1,0 +1,8 @@
+{
+  "name": "artillery-s3-load-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1083.0",
+    "artillery": "^2.0.33"
+  }
+}

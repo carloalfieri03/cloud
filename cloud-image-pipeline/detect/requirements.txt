@@ -1,4 +1,4 @@
-opencv-python-headless
+opencv-python-headless==4.10.0.84
 numpy
 ## boto non c'è bisogno visto che è nativo di Lambda e gli altri package sono built in di python
 boto3

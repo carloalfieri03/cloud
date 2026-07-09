@@ -10,6 +10,7 @@ import signal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+IS_COLD_START = True
 
 LOCAL_TEST = os.environ.get("LOCAL_TEST", "false").lower() == "true"
 LOCAL_OUTPUT_DIR = os.environ.get("LOCAL_OUTPUT_DIR", "/tmp/output")
@@ -49,7 +50,7 @@ def get_net():
     global NET
     if NET is None:
         logger.info("Loading the MobileNet-SSD model...")
-        NET = cv2.dnn.readNetFromCaffe(PROTOTXT_PATH, WEIGHTS_PATH)
+        NET = cv2.dnn.readNet(PROTOTXT_PATH, WEIGHTS_PATH,"Caffe")
     
     return NET
 
@@ -66,8 +67,16 @@ def download_image_from_s3(bucket_name, object_key):
   
     response = s3.get_object(Bucket=bucket_name, Key=object_key)
     content = response['Body'].read()
+    # ADD THIS: Prevent 0-byte Artillery artifacts from crashing OpenCV
+    if not content or len(content) == 0:
+        raise ValueError(f"S3 object {object_key} is completely empty (0 bytes).")
+        
+    
     image_array = np.frombuffer(content, dtype=np.uint8)
     image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"OpenCV failed to decode image data for {object_key}.")
+    
     return image, len(content)
     
 
@@ -88,7 +97,7 @@ def detect_objects(image):
     """
     returns an annotated copy of the image plus a list of detections (label, confidence, box).
     """
-    logger.info(cv2.getBuildInformation())
+    #logger.info(cv2.getBuildInformation())
     # image shape: (height × width × channels) 
     (h, w) = image.shape[:2]
     net = get_net()
@@ -136,9 +145,10 @@ def detect_objects(image):
     return annotated_image, results
 
 
-def cloudwatch_put_metric(size_category, operation, duration_ms, detection_count):
+def cloudwatch_put_metric(size_category, operation, duration_ms, detection_count,is_cold):
     if cloudwatch is None:
         return
+    cold_start_str = "True" if is_cold else "False"
     """
     Emits a custom CloudWatch metric with the image size category as a dimension.
     """
@@ -150,7 +160,8 @@ def cloudwatch_put_metric(size_category, operation, duration_ms, detection_count
                     "MetricName": "ProcessingDurationMs",
                     "Dimensions": [
                         {"Name": "SizeCategory", "Value": size_category},
-                        {"Name": "Operation", "Value": operation}
+                        {"Name": "Operation", "Value": operation},
+                        {"Name": "IsColdStart", "Value": cold_start_str}
                     ],
                     "Value": duration_ms,
                     "Unit": "Milliseconds"
@@ -171,7 +182,23 @@ def cloudwatch_put_metric(size_category, operation, duration_ms, detection_count
 def core_process(record):
     bucket = record['s3']['bucket']['name']
     key = urllib.parse.unquote_plus(record['s3']['object']['key'])
+    # ADD THIS: Instantly ignore anything that isn't a jpg or png
+    valid_extensions = ('.jpg', '.jpeg', '.png')
+    if not key.lower().endswith(valid_extensions):
+        logger.warning(f"Ignoring non-image file from load test: {key}")
+        return 0
     base_name = os.path.splitext(os.path.basename(key))[0]
+        
+    
+    global IS_COLD_START
+    
+    # Capture the state for the current invocation
+    current_invocation_is_cold = IS_COLD_START
+    
+    # Immediately flip the flag to False so subsequent warm hits skip this
+    if IS_COLD_START:
+        IS_COLD_START = False
+        logger.info("This invocation is running inside a newly initialized container (Cold Start).")
 
     # ==========================================
     # FAILURE INJECTION TESTING SECTION
@@ -215,7 +242,7 @@ def core_process(record):
     detections_count = len(detections)
     duration_ms = (time.perf_counter() - start) * 1000
     
-    cloudwatch_put_metric(size_category, "detect", duration_ms, detections_count)
+    cloudwatch_put_metric(size_category, "detect", duration_ms, detections_count,current_invocation_is_cold)
     logger.info(f" Detection finished: {key} in {duration_ms:.2f} ms")
     return 0
 
@@ -280,59 +307,3 @@ def detection_handler(event, context):
             raise e
 
     return {"status": "success", "operation": "detect", "processed": results}
-
-### --- NEW CODE FOR THE EC2 WORKER (PROPOSAL 4) BELOW --- ###
-
-# Important!!! 
-# get_net() is still lazy-loaded on first-call, exactly as in the Lambda version. But on EC2 this only matters once.
-# It's a normal runnig program, not a per-invocation env. Thus, the model is loaded exactly once for the 
-# entire lifetime of the worker.
-
-_shutdown_requested = False # Ctrl+C
-
-def handle_shutdown_signal(sign, frame):
-    global _shutdown_requested
-    logger.info(f"Shutdown signal received: {sign}. Will exit after current poll cycle.")
-    _shutdown_requested = True
-
-signal.signal(signal.SIGTERM, handle_shutdown_signal) # ask the process to terminate gracefully
-signal.signal(signal.SIGINT, handle_shutdown_signal)
-
-# to reuse the same core_process() function, we need to build a fake S3 event record for each object found in the input bucket
-def build_fake_s3_record(bucket, key):
-    return {"s3": {"bucket": {"name": bucket}, "object": {"key": key}}}
-
-def run_worker():
-    if not INPUT_BUCKET:
-        raise SystemExit("INPUT_BUCKET env var is required for the EC2 worker mode.")
-    
-    # Load the model immediately at startup rather than waiting for the first image
-
-    get_net()
-
-    logger.info(
-        f"Starting EC2 resize worker. INPUT_BUCKET={INPUT_BUCKET} "
-        f"OUTPUT_BUCKET={OUTPUT_BUCKET} POLL_INTERVAL={POLL_INTERVAL_SECONDS}s"
-    )
-
-    while not _shutdown_requested: # infinite loop, until Ctrl+C or SIGTERM is received
-        try:
-            # every 5s (or whatever POLL_INTERVAL_SECONDS is set to), list objects in the input bucket
-            response = s3.list_objects_v2(Bucket=INPUT_BUCKET, MaxKeys=MAX_KEYS_PER_POLL)
-            for obj in response.get("Contents", []):
-                key = obj["Key"]
-                record = build_fake_s3_record(INPUT_BUCKET, key)
-                try:
-                    core_process(record)
-                    s3.delete_object(Bucket=INPUT_BUCKET, Key=key)
-                except Exception:
-                    logger.exception(f"Failed to process {key} - leaving it in the bucket to retry next poll")
-        except Exception:
-            logger.exception("Error while polling S3 - will retry next cycle")
-
-        time.sleep(POLL_INTERVAL_SECONDS)
-
-    logger.info("Worker stopped cleanly.")
-
-if __name__ == "__main__":
-    run_worker()
