@@ -13,7 +13,7 @@ Parameters:
 
   GrayscaleMemorySize:
     Type: Number
-    Default: 256
+    Default: 512
 
   DetectMemorySize:
     Type: Number
