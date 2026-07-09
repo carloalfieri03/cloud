@@ -2,3 +2,4 @@ Datav2/*
 local_output/*
 !local_output/.gitkeep
 *.jpg
+node_modules/
